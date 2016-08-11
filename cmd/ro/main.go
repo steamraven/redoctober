@@ -63,20 +63,24 @@ func registerFlags() {
 	flag.StringVar(&outPath, "out", "", "output data file")
 	flag.StringVar(&outEnv, "outenv", "", "env variable for output data")
 	flag.StringVar(&user, "user", "", "username")
-	flag.StringVar(&pswd, "password", "", "password")
-	flag.StringVar(&userType, "userType", "rsa", "user key type: ecc or rsa")
+	flag.StringVar(&pswd, "password", "", "password (only if -user is specified)")
+	flag.StringVar(&userType, "userType", "RSA", "user key type: ecc or rsa")
 	flag.StringVar(&hcName, "hipchat-name", "", "hipchat name for user, used for notifications")
-	flag.StringVar(&userEnv, "userenv", "RO_USER", "env variable for user name")
-	flag.StringVar(&pswdEnv, "pswdenv", "RO_PASS", "env variable for user password")
+	flag.StringVar(&userEnv, "userenv", "RO_USER", "env variable for user name if -user is not specified")
+	flag.StringVar(&pswdEnv, "pswdenv", "RO_PASS", "env variable for user password if -user is not specified")
 	flag.DurationVar(&pollInterval, "poll-interval", time.Second, "interval for polling an outstanding order (set 0 to disable polling)")
 }
 
 func getUserCredentials() {
-	user = os.Getenv(userEnv)
-	pswd = os.Getenv(pswdEnv)
-	if user == "" || pswd == "" {
+	if user == "" {
+		user = os.Getenv(userEnv)
+		pswd = os.Getenv(pswdEnv)
+	}
+	if user == "" {
 		fmt.Print("Username:")
 		fmt.Scan(&user)
+	}
+	if pswd == "" {
 		var err error
 		pswd, err = gopass.GetPass("Password:")
 		processError(err)
@@ -258,6 +262,16 @@ func runDecrypt() {
 }
 
 func runOrder() {
+	inBytes, err := ioutil.ReadFile(inPath)
+	processError(err)
+
+	// base64 decode the input
+	encBytes, err := base64.StdEncoding.DecodeString(string(inBytes))
+	if err != nil {
+		log.Println("fail to base64 decode the data, proceed with raw data")
+		encBytes = inBytes
+	}
+
 	req := core.OrderRequest{
 		Name:     user,
 		Password: pswd,
@@ -265,6 +279,7 @@ func runOrder() {
 		Duration: duration,
 		Labels:   processCSL(labels),
 		Users:    processCSL(users),
+		EncryptedData: encBytes,
 	}
 	resp, err := roServer.Order(req)
 	processError(err)
@@ -289,8 +304,16 @@ func runOwner() {
 	inBytes, err := ioutil.ReadFile(inPath)
 	processError(err)
 
+	// base64 decode the input
+	encBytes, err := base64.StdEncoding.DecodeString(string(inBytes))
+	if err != nil {
+		log.Println("fail to base64 decode the data, proceed with raw data")
+		encBytes = inBytes
+	}
+
+
 	req := core.OwnersRequest{
-		Data: inBytes,
+		Data: encBytes,
 	}
 
 	resp, err := roServer.Owners(req)
