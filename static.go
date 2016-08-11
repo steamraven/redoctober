@@ -853,7 +853,21 @@ const (
 						if (!d.hasOwnProperty(jj))
 							continue;
 						var o = d[jj];
-						ordout += o.Name + " requesting " + JSON.stringify(o.Labels) + " has " + o.Delegated + "\n";
+						ordout += "<li>";
+						for (var ii in o) {
+							if (!ii)
+								continue;
+							if (!o.hasOwnProperty(ii)) {
+								continue;
+							}
+							if (typeof(o[ii]) == "object") {
+								ordout += "<p>"+htmlspecialchars(ii)+": "+htmlspecialchars(JSON.stringify(o[ii]))+"</p>";
+							} else {
+								ordout += "<p>"+htmlspecialchars(ii)+": "+htmlspecialchars(o[ii])+"</p>";
+							}
+						}
+						ordout += "</li>\n";
+						//ordout += o.Creator + " requesting " + JSON.stringify(o.Labels) + " has " + o.Delegated + "\n";
 
 					}
 					$form.find('.feedback').empty().append(
