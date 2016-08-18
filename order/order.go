@@ -166,3 +166,62 @@ func (o *Orderer) FindOrder(user string, labels []string) (string, bool) {
 	}
 	return "", false
 }
+
+func  intersect(a []string,b []string) []string {
+	if len(a) == 0 || len(b) == 0 {
+		return []string{"Any"};
+	}
+	x := []string{};
+	for _, a1 := range a {
+		for _, b1 := range b {
+			if a1 == b1 {
+				x=append(x,a1);
+			}
+		}
+	}
+	return  x;
+}
+
+
+func (o *Orderer) UpdateOrders(owner string, time string,  users []string, labels []string) (err error) {
+	owners := []string{owner}
+	for key, order := range o.Orders {
+		common_owners := intersect(owners, order.Owners)
+		common_users := intersect(users, order.Users)
+		common_labels := intersect(labels, order.Labels)
+		if len(common_owners) > 0 &&
+		   len(common_users) > 0 &&
+		   len(common_labels) > 0 {
+			if len(order.OwnersDelegated) == 0 {
+				order.OwnersDelegated = append(order.OwnersDelegated, owner)
+				order.Delegated++
+			} else {
+				for _, delegated := range order.OwnersDelegated {
+					if delegated == owner {
+						continue
+					}
+					order.OwnersDelegated = append(order.OwnersDelegated, owner)
+					order.Delegated++
+				}
+			}
+			o.Orders[key] = order
+			for _, delegatedUser := range common_users {
+				o.NotifyDelegation(owner, delegatedUser, key, time, common_labels)
+			}
+		}
+	}
+	return nil
+}
+
+func (o *Orderer) FulfillOrders(user string, owners []string, labels []string) (err error) {
+	users := []string{user}
+	for key, order := range o.Orders {
+		if len(intersect(owners, order.Owners))  == len(owners) &&
+		   len(intersect(users, order.Users)) > 0 &&
+		   len(intersect(labels, order.Labels)) > 0 {
+			delete(o.Orders, key)
+			o.NotifyOrderFulfilled(user, key)
+		}
+	}
+	return nil
+}

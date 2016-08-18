@@ -424,30 +424,8 @@ func Delegate(jsonIn []byte) ([]byte, error) {
 	}
 
 	// Make sure we capture the number who have already delegated.
-	for _, delegatedUser := range s.Users {
-		if orderKey, found := orders.FindOrder(delegatedUser, s.Labels); found {
-			order := orders.Orders[orderKey]
 
-			// Don't re-add names to the list of people who have delegated. Instead
-			// just skip them but make sure we count their delegation
-			if len(order.OwnersDelegated) == 0 {
-				order.OwnersDelegated = append(order.OwnersDelegated, s.Name)
-			} else {
-				for _, ownerName := range order.OwnersDelegated {
-					if ownerName == s.Name {
-						continue
-					}
-					order.OwnersDelegated = append(order.OwnersDelegated, s.Name)
-					order.Delegated++
-				}
-			}
-			orders.Orders[orderKey] = order
-
-			// Notify the hipchat room that there was a new delegator
-			orders.NotifyDelegation(s.Name, delegatedUser, orderKey, s.Time, s.Labels)
-
-		}
-	}
+	orders.UpdateOrders(s.Name, s.Time, s.Users, s.Labels)
 
 	return jsonStatusOk()
 }
@@ -653,10 +631,7 @@ func Decrypt(jsonIn []byte) ([]byte, error) {
 	}
 
 	// Cleanup any orders that have been fulfilled and notify the room.
-	if orderKey, found := orders.FindOrder(s.Name, allLabels); found {
-		delete(orders.Orders, orderKey)
-		orders.NotifyOrderFulfilled(s.Name, orderKey)
-	}
+	orders.FulfillOrders(s.Name, names, allLabels)
 	return jsonResponse(out)
 }
 
