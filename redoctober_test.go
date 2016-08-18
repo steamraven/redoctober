@@ -22,6 +22,8 @@ import (
 	"github.com/cloudflare/redoctober/config"
 	"github.com/cloudflare/redoctober/core"
 	"github.com/cloudflare/redoctober/persist"
+	"github.com/cloudflare/redoctober/order"
+
 )
 
 const baseURL = "https://localhost:8080/"
@@ -885,4 +887,127 @@ func afterRestartRestore(t *testing.T, cfgPath, vaultPath string) {
 	restoreCheckLiveCount(t, 2)
 	restoreCheckLiveUsers(t, []string{delegateInput2.Name, delegateInput3.Name},
 		[]string{createUserInput1.Name, createVaultInput.Name})
+}
+
+//
+// Order testing
+//
+
+func TestOrder(t *testing.T) {
+	cmd := setup(t)
+	defer teardown(t, cmd)
+
+	// Create a vault/admin user and 1 normal user so there is data to work with.
+	if _, _, err := post("create", createVaultInput); err != nil {
+		t.Fatalf("Error creating vault, %v", err)
+	}
+	if _, _, err := post("create-user", createUserInput1); err != nil {
+		t.Fatalf("Error creating user 1, %v", err)
+	}
+	if _, _, err := post("create-user", createUserInput2); err != nil {
+		t.Fatalf("Error creating user 2, %v", err)
+	}
+
+	// Encrypt data and keep the encrypted response.
+	respBytes, _, err := post("encrypt", encryptInput)
+
+	if err != nil {
+		t.Fatalf("Error encrypting data, %v", err)
+	}
+	var s core.ResponseData
+	if err := json.Unmarshal(respBytes, &s); err != nil {
+		t.Fatalf("Error getting encrypted data, %v", err)
+	}
+	encryptedData := s.Response
+
+
+	orderInput := &core.OrderRequest{
+		Name:     createVaultInput.Name,
+		Password: createVaultInput.Password,
+
+		Duration: "2h39m",
+		Uses:     1,
+		Users:    []string{createVaultInput.Name},
+		EncryptedData: encryptedData,
+	}
+
+	if err := postAndTest("order", orderInput, 200, "ok"); err != nil {
+		t.Fatalf("Error creating order, %v", err)
+	}
+}
+func TestInfo(t *testing.T) {
+	cmd := setup(t)
+	defer teardown(t, cmd)
+
+	// Create a vault/admin user and 1 normal user so there is data to work with.
+	if _, _, err := post("create", createVaultInput); err != nil {
+		t.Fatalf("Error creating vault, %v", err)
+	}
+	if _, _, err := post("create-user", createUserInput1); err != nil {
+		t.Fatalf("Error creating user 1, %v", err)
+	}
+	if _, _, err := post("create-user", createUserInput2); err != nil {
+		t.Fatalf("Error creating user 2, %v", err)
+	}
+
+	// Encrypt data and keep the encrypted response.
+	respBytes, _, err := post("encrypt", encryptInput)
+
+	if err != nil {
+		t.Fatalf("Error encrypting data, %v", err)
+	}
+	var s core.ResponseData
+	if err := json.Unmarshal(respBytes, &s); err != nil {
+		t.Fatalf("Error getting encrypted data, %v", err)
+	}
+	encryptedData := s.Response
+
+
+
+	infoInput := &core.OrderInfoRequest{
+		Name:     createVaultInput.Name,
+		Password: createVaultInput.Password,
+		OrderNum: "1234",
+	}
+
+	// Test non-existant order
+	if err := postAndTest("orderinfo", infoInput, 200, "No order with that number"); err != nil {
+		t.Fatalf("Error getting info on non-existant order, %v", err)
+	}
+
+
+
+	orderInput := &core.OrderRequest{
+		Name:     createVaultInput.Name,
+		Password: createVaultInput.Password,
+
+		Duration: "2h39m",
+		Uses:     1,
+		Users:    []string{createVaultInput.Name},
+		EncryptedData: encryptedData,
+	}
+	// create an order
+	respBytes, _, err = post("order", orderInput)
+	if err != nil {
+		t.Fatalf("Error creating order, %v", err)
+	}
+
+	//get order num
+	if err := json.Unmarshal(respBytes, &s); err != nil {
+		t.Fatalf("Error decoding response, %v", err)
+	}
+	var order order.Order
+	if err := json.Unmarshal(s.Response, &order); err != nil {
+		t.Fatalf("Error decoding order, %v", err)
+	}
+
+	infoInput.OrderNum = order.Num
+
+	// Test existing order
+	if err := postAndTest("orderinfo", infoInput, 200, "ok"); err != nil {
+		t.Fatalf("Error getting info on existing order, %v", err)
+	}
+
+
+
 }

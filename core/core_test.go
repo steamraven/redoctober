@@ -16,6 +16,7 @@ import (
 	"github.com/cloudflare/redoctober/config"
 	"github.com/cloudflare/redoctober/passvault"
 	"github.com/cloudflare/redoctober/persist"
+	"github.com/cloudflare/redoctober/order"
 )
 
 func tempName(t *testing.T) string {
@@ -1399,4 +1400,369 @@ func TestRestore(t *testing.T) {
 	// October server.
 	restoreCreateVault(t, pstore, file)
 	afterRestartRestore(t)
+}
+
+// Test correct order updating based on delegation
+
+func setupOrderState(t *testing.T, labels []string) []byte {
+        createJson         := []byte("{\"Name\":\"Alice\",\"Password\":\"Hello\"}")
+        createUserJson1    := []byte("{\"Name\":\"Bob\",\"Password\":\"Hello\",\"UserType\":\"RSA\",\"HipchatName\":\"\"}")
+	createUserJson2    := []byte("{\"Name\":\"Carol\",\"Password\":\"Hello\",\"UserType\":\"RSA\",\"HipchatName\":\"\"}")
+        createUserJson3    := []byte("{\"Name\":\"Dodo\",\"Password\":\"Hello\",\"UserType\":\"RSA\",\"HipchatName\":\"\"}")
+        encryptRequest := EncryptRequest{
+                Name:     "Alice",
+                Password: "Hello",
+                Minimum:   2,
+                Owners:    []string{"Bob","Carol"},
+                Labels:    labels,
+                Data:      []byte("SGVsbG8gSmVsbG8="),
+        }
+        orderRequest  := OrderRequest{
+		Name:     "Alice",
+		Password: "Hello",
+		Duration: "2h39m",
+		Uses:     1,
+		Users:    []string{"Alice"},
+                Labels:   labels,
+        }
+	cfg := config.New()
+	Init("memory", cfg)
+
+	// check for summary of initialized vault with new member
+	var s ResponseData
+	respJson, err := Create(createJson)
+	if err != nil {
+		t.Fatalf("Error in creating vault, %v", err)
+	}
+	err = json.Unmarshal(respJson, &s)
+	if err != nil {
+		t.Fatalf("Error in creating vault, %v", err)
+	}
+	if s.Status != "ok" {
+		t.Fatalf("Error in creating vault, %v", s.Status)
+	}
+
+	respJson, err = CreateUser(createUserJson1)
+	if err != nil {
+		t.Fatalf("Error in creating user account, %v", err)
+	}
+	err = json.Unmarshal(respJson, &s)
+	if err != nil {
+		t.Fatalf("Error in creating user account, %v", err)
+	}
+	if s.Status != "ok" {
+		t.Fatalf("Error in creating user account, %v", s.Status)
+	}
+
+	respJson, err = CreateUser(createUserJson2)
+	if err != nil {
+		t.Fatalf("Error in creating user account, %v", err)
+	}
+	err = json.Unmarshal(respJson, &s)
+	if err != nil {
+		t.Fatalf("Error in creating user account, %v", err)
+	}
+	if s.Status != "ok" {
+		t.Fatalf("Error in creating user account, %v", s.Status)
+	}
+
+	respJson, err = CreateUser(createUserJson3)
+	if err != nil {
+		t.Fatalf("Error in creating user account, %v", err)
+	}
+	err = json.Unmarshal(respJson, &s)
+	if err != nil {
+		t.Fatalf("Error in creating user account, %v", err)
+	}
+	if s.Status != "ok" {
+		t.Fatalf("Error in creating user account, %v", s.Status)
+	}
+
+	// Encrypt
+        encryptJson, err := json.Marshal(encryptRequest)
+	if err != nil {
+		t.Fatalf("Error in marshalling encrypt request, %v", err)
+	}
+	respJson, err = Encrypt(encryptJson)
+	if err != nil {
+		t.Fatalf("Error in encrypt, %v", err)
+	}
+	err = json.Unmarshal(respJson, &s)
+	if err != nil {
+		t.Fatalf("Error in encrypt, %v", err)
+	}
+	if s.Status != "ok" {
+		t.Fatalf("Error in encrypt, %v", s.Status)
+	}
+        // Request Order
+        orderRequest.EncryptedData = s.Response
+        orderJson, err := json.Marshal(orderRequest)
+	if err != nil {
+		t.Fatalf("Error in marshalling orde request, %v", err)
+	}
+	respJson2, err := Order(orderJson)
+	if err != nil {
+		t.Fatalf("Error in order, %v", err)
+	}
+	err = json.Unmarshal(respJson2, &s)
+	if err != nil {
+		t.Fatalf("Error in order, %v", err)
+	}
+	if s.Status != "ok" {
+		t.Fatalf("Error in order, %v", s.Status)
+	}
+	var orderData order.Order
+	err = json.Unmarshal(s.Response, &orderData)
+	if err != nil {
+		t.Fatalf("Error in unmashaling order, %v", err)
+	}
+        // create Order info json
+        orderInfo := OrderInfoRequest {
+                Name: orderRequest.Name,
+                Password: orderRequest.Password,
+                OrderNum: orderData.Num,
+        }
+        orderInfoJson, err := json.Marshal(orderInfo)
+             if err != nil {
+		t.Fatalf("Error in marshalling order info, %v", err)
+	}
+        return orderInfoJson
+}
+
+func TestOrderDelegationZero(t *testing.T) {
+        infoJson := setupOrderState(t, nil)
+
+	// Test with 0 delegate
+	respJson, err := OrderInfo(infoJson)
+	if err != nil {
+		t.Fatalf("Error getting info on existing order, %v", err)
+	}
+        var s ResponseData
+	if err := json.Unmarshal(respJson, &s); err != nil {
+		t.Fatalf("Error decoding response, %v", err)
+	}
+	var order order.Order
+	if err := json.Unmarshal(s.Response, &order); err != nil {
+		t.Fatalf("Error decoding order, %v", err)
+	}
+	if order.Delegated != 0 || len(order.OwnersDelegated) != 0 {
+		t.Fatalf("Bad order info for 0 delegations, %v", order)
+	}
+}
+
+func TestOrderDelegationNonOwner(t *testing.T) {
+        infoJson := setupOrderState(t,nil)
+
+	// test with a non-owner delegate
+        delegateJson3 := []byte("{\"Name\":\"Dodo\",\"Password\":\"Hello\",\"Time\":\"15m\",\"Uses\":1}")
+
+	if _, err := Delegate(delegateJson3); err != nil {
+		t.Fatalf("Error delegating with user 3, %v", err)
+	}
+	respJson, err := OrderInfo(infoJson)
+        if err != nil {
+		t.Fatalf("Error getting info on existing order, %v", err)
+	}
+        var s ResponseData
+	if err := json.Unmarshal(respJson, &s); err != nil {
+		t.Fatalf("Error decoding response, %v", err)
+	}
+	var order order.Order
+	if err := json.Unmarshal(s.Response, &order); err != nil {
+		t.Fatalf("Error decoding order, %v", err)
+	}
+	if order.Delegated != 0 || len(order.OwnersDelegated) != 0  {
+		t.Fatalf("Bad order info for non-owner delegation. Should be 0 delegations, %v", order)
+	}
+}
+
+
+func TestOrderDelegationNonUser(t *testing.T) {
+        infoJson := setupOrderState(t,nil)
+
+        delegateJson1 := []byte("{\"Name\":\"Bob\",\"Password\":\"Hello\",\"Time\":\"15m\",\"Uses\":1,\"Users\":[\"Carol\"]}")
+
+	// test with delegation with different user than order
+	if _, err := Delegate(delegateJson1); err != nil {
+		t.Fatalf("Error delegating with user 1 for user 2, %v", err)
+	}
+        respJson, err := OrderInfo( infoJson)
+        if err != nil {
+		t.Fatalf("Error getting info on existing order, %v", err)
+	}
+        var s ResponseData
+	if err := json.Unmarshal(respJson, &s); err != nil {
+		t.Fatalf("Error decoding response, %v", err)
+	}
+	var order order.Order
+	if err := json.Unmarshal(s.Response, &order); err != nil {
+		t.Fatalf("Error decoding order, %v", err)
+	}
+	if order.Delegated != 0 || len(order.OwnersDelegated) != 0  {
+		t.Fatalf("Bad order info for different user delegation. Should be 0 delegations, %v", order)
+	}
+}
+
+func TestOrderDelegationAnyUser(t *testing.T) {
+        infoJson := setupOrderState(t,nil)
+
+        delegateJson1 := []byte("{\"Name\":\"Bob\",\"Password\":\"Hello\",\"Time\":\"15m\",\"Uses\":1}")
+
+	// Test with  1 owner delegate
+	if _, err := Delegate(delegateJson1); err != nil {
+		t.Fatalf("Error delegating with user 1, %v", err)
+	}
+        respJson, err := OrderInfo(infoJson)
+        if err != nil {
+		t.Fatalf("Error getting info on existing order, %v", err)
+	}
+        var s ResponseData
+	if err := json.Unmarshal(respJson, &s); err != nil {
+		t.Fatalf("Error decoding response, %v", err)
+	}
+	var order order.Order
+	if err := json.Unmarshal(s.Response, &order); err != nil {
+		t.Fatalf("Error decoding order, %v", err)
+	}
+	if order.Delegated != 1 || len(order.OwnersDelegated) != 1 ||
+	   order.OwnersDelegated[0] != "Bob"  {
+		t.Fatalf("Bad order info for delegation to any user, %v", order)
+	}
+}
+func TestOrderDelegationSpecificUser(t *testing.T) {
+        infoJson := setupOrderState(t,nil)
+
+        delegateJson1 := []byte("{\"Name\":\"Bob\",\"Password\":\"Hello\",\"Time\":\"15m\",\"Uses\":1,\"Users\":[\"Alice\"]}")
+
+	// Test with owner delegate to user requesting order
+
+	if _, err := Delegate(delegateJson1); err != nil {
+		t.Fatalf("Error delegating with user 1, %v", err)
+	}
+        respJson, err := OrderInfo(infoJson)
+        if err != nil {
+		t.Fatalf("Error getting info on existing order, %v", err)
+	}
+        var s ResponseData
+	if err := json.Unmarshal(respJson, &s); err != nil {
+		t.Fatalf("Error getting info on existing order, %v", err)
+	}
+	var order order.Order
+	if err := json.Unmarshal(s.Response, &order); err != nil {
+		t.Fatalf("Error decoding order, %v", err)
+	}
+	if order.Delegated != 1 || len(order.OwnersDelegated) != 1 ||
+	   order.OwnersDelegated[0] !="Bob"  {
+		t.Fatalf("Bad order info for delegation to user, %v", order)
+	}
+}
+func TestOrderDelegationAnyToSpecificLabel(t *testing.T) {
+        labels := []string{"Stuff"}
+        infoJson := setupOrderState(t,labels)
+
+        delegateJson1 := []byte("{\"Name\":\"Bob\",\"Password\":\"Hello\",\"Time\":\"15m\",\"Uses\":1}")
+
+	// Test with owner delegate to user requesting order
+
+	if _, err := Delegate(delegateJson1); err != nil {
+		t.Fatalf("Error delegating with user 1, %v", err)
+	}
+        respJson, err := OrderInfo(infoJson)
+        if err != nil {
+		t.Fatalf("Error getting info on existing order, %v", err)
+	}
+        var s ResponseData
+	if err := json.Unmarshal(respJson, &s); err != nil {
+		t.Fatalf("Error decoding response, %v", err)
+	}
+	var order order.Order
+	if err := json.Unmarshal(s.Response, &order); err != nil {
+		t.Fatalf("Error decoding order, %v", err)
+	}
+	if order.Delegated != 1 || len(order.OwnersDelegated) != 1 ||
+	   order.OwnersDelegated[0] != "Bob"  {
+		t.Fatalf("Bad order info for delegation with any label to order with specific label, %v", order)
+	}
+}
+func TestOrderDelegationSpecificToAnyLabel(t *testing.T) {
+        infoJson := setupOrderState(t,nil)
+
+        delegateJson1 := []byte("{\"Name\":\"Bob\",\"Password\":\"Hello\",\"Time\":\"15m\",\"Uses\":1,\"Labels\":[\"Stuff\"]}")
+
+	// Test with owner delegate to user requesting order
+
+	if _, err := Delegate(delegateJson1); err != nil {
+		t.Fatalf("Error delegating with user 1, %v", err)
+	}
+        respJson, err := OrderInfo(infoJson)
+        if err != nil {
+		t.Fatalf("Error getting info on existing order, %v", err)
+	}
+        var s ResponseData
+	if err := json.Unmarshal(respJson, &s); err != nil {
+		t.Fatalf("Error decoding response, %v", err)
+	}
+	var order order.Order
+	if err := json.Unmarshal(s.Response, &order); err != nil {
+		t.Fatalf("Error decoding order, %v", err)
+	}
+	if order.Delegated != 1 || len(order.OwnersDelegated) != 1 ||
+	   order.OwnersDelegated[0] != "Bob"  {
+		t.Fatalf("Bad order info for delegation with specific label to order with any label, %v", order)
+	}
+}
+func TestOrderDelegationSpecificToSpecificLabel(t *testing.T) {
+        labels := []string{"Stuff"}
+        infoJson := setupOrderState(t,labels)
+
+        delegateJson1 := []byte("{\"Name\":\"Bob\",\"Password\":\"Hello\",\"Time\":\"15m\",\"Uses\":1,\"Labels\":[\"Stuff\"]}")
+
+	// Test with owner delegate to user requesting order
+
+	if _, err := Delegate(delegateJson1); err != nil {
+		t.Fatalf("Error delegating with user 1, %v", err)
+	}
+        respJson, err := OrderInfo(infoJson)
+        if err != nil {
+		t.Fatalf("Error getting info on existing order, %v", err)
+	}
+        var s ResponseData
+	if err := json.Unmarshal(respJson, &s); err != nil {
+		t.Fatalf("Error decoding response, %v", err)
+	}
+	var order order.Order
+	if err := json.Unmarshal(s.Response, &order); err != nil {
+		t.Fatalf("Error decoding order, %v", err)
+	}
+	if order.Delegated != 1 || len(order.OwnersDelegated) != 1 ||
+	   order.OwnersDelegated[0] != "Bob"  {
+		t.Fatalf("Bad order info for delegation with specific label to order with specific label, %v", order)
+	}
+}
+func TestOrderDelegationBadLabel(t *testing.T) {
+        labels := []string{"Stuff"}
+        infoJson := setupOrderState(t,labels)
+
+        delegateJson1 := []byte("{\"Name\":\"Bob\",\"Password\":\"Hello\",\"Time\":\"15m\",\"Uses\":1,\"Labels\":[\"OtherStuff\"]}")
+
+	// Test with owner delegate to user requesting order
+
+	if _, err := Delegate(delegateJson1); err != nil {
+		t.Fatalf("Error delegating with user 1, %v", err)
+	}
+        respJson, err := OrderInfo(infoJson)
+        if err != nil {
+		t.Fatalf("Error getting info on existing order, %v", err)
+	}
+        var s ResponseData
+	if err := json.Unmarshal(respJson, &s); err != nil {
+		t.Fatalf("Error decoding response, %v", err)
+	}
+	var order order.Order
+	if err := json.Unmarshal(s.Response, &order); err != nil {
+		t.Fatalf("Error decoding order, %v", err)
+	}
+	if order.Delegated != 0 || len(order.OwnersDelegated) != 0 {
+		t.Fatalf("Bad order info for delegation to order with different labels, %v", order)
+	}
 }
